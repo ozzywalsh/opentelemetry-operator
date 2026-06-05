@@ -17,11 +17,210 @@ To ensure project scope safety and decouple maintenance loops, this architecture
 * **Operator Domain:** The operator is exclusively responsible for the Kubernetes lifecycle automation (DaemonSet state, RBAC provisioning, platform-specific security matching).
 * **eBPF SIG Domain:** The verification safety of the underlying BPF bytecode, user-space protocol translation efficiency, and Linux kernel version compatibility matrix remain strictly under the authority of the upstream eBPF Instrumentation SIG.
 
-## 3. Architecture & Topology
+## 3. Walkthrough: Admin and Tenant Flow
+
+This section walks through a single scenario end-to-end: a platform admin enables eBPF tracing, two tenant teams opt their workloads in, and the operator reconciles everything into concrete cluster resources.
+
+### 3.1 Platform admin creates the ClusterOBIAgent
+
+The admin wants application-mode tracing across all nodes, with delegation restricted to two tenant namespaces.
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: ClusterOBIAgent
+metadata:
+  name: production
+spec:
+  mode: application
+  tenantDelegation:
+    mode: AllowList
+    namespacesAllowList:
+      - tenant-alpha
+      - tenant-beta
+  config: |
+    otel_traces_export:
+      endpoint: http://otel-collector.observability:4318
+```
+
+### 3.2 Tenant teams create OBIInstrumentation resources
+
+**tenant-alpha** — instrument all opted-in pods:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: OBIInstrumentation
+metadata:
+  name: default
+  namespace: tenant-alpha
+spec:
+  podAnnotations:
+    instrument-with-obi: "true"
+```
+
+A deployment in `tenant-alpha` opting in:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-service
+  namespace: tenant-alpha
+spec:
+  template:
+    metadata:
+      annotations:
+        instrument-with-obi: "true"
+    spec:
+      containers:
+        - name: checkout
+          image: registry.example.com/checkout:v2.4.0
+```
+
+**tenant-beta** — instrument only critical-tier services:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: OBIInstrumentation
+metadata:
+  name: critical-only
+  namespace: tenant-beta
+spec:
+  podAnnotations:
+    instrument-with-obi: "true"
+    service-tier: critical
+```
+
+Pods in `tenant-beta` must carry **both** annotations to be instrumented.
+
+### 3.3 What the operator creates
+
+After reconciliation, the cluster contains the following operator-managed resources.
+
+**DaemonSet** — one OBI pod per node, with the minimal capability set for `application` mode:
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: production-agent
+  namespace: opentelemetry-operator-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: production
+      app.kubernetes.io/managed-by: opentelemetry-operator
+  template:
+    spec:
+      serviceAccountName: production-sa
+      hostPID: true
+      containers:
+        - name: obi-agent
+          image: otel/ebpf-instrument:v0.9.0
+          securityContext:
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            capabilities:
+              add: [BPF, PERFMON, NET_RAW, SYS_PTRACE, DAC_READ_SEARCH, CHECKPOINT_RESTORE]
+              drop: [ALL]
+          volumeMounts:
+            - name: obi-config
+              mountPath: /config
+              readOnly: true
+            - name: var-run-obi
+              mountPath: /var/run/obi
+            - name: cgroup
+              mountPath: /sys/fs/cgroup
+            - name: kernel-security
+              mountPath: /sys/kernel/security
+              readOnly: true
+      volumes:
+        - name: obi-config
+          configMap:
+            name: production-config
+        - name: var-run-obi
+          emptyDir: {}
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+        - name: kernel-security
+          hostPath:
+            path: /sys/kernel/security
+```
+
+**ConfigMap** — the admin's `spec.config` merged with discovery filters compiled from `OBIInstrumentation` resources. The `k8s_namespace` field is injected by the controller and cannot be overridden by tenants:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: production-config
+  namespace: opentelemetry-operator-system
+data:
+  obi-config.yml: |
+    otel_traces_export:
+      endpoint: http://otel-collector.observability:4318
+    discovery:
+      instrument:
+        - k8s_namespace: tenant-alpha
+          k8s_pod_annotations:
+            instrument-with-obi: "true"
+        - k8s_namespace: tenant-beta
+          k8s_pod_annotations:
+            instrument-with-obi: "true"
+            service-tier: critical
+```
+
+**RBAC** — ServiceAccount, ClusterRole (read-only), and ClusterRoleBinding:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: production-sa
+  namespace: opentelemetry-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: production-cluster-role
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, services]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: production-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: production-cluster-role
+subjects:
+  - kind: ServiceAccount
+    name: production-sa
+    namespace: opentelemetry-operator-system
+```
+
+### 3.4 What happens at runtime
+
+| Pod | Namespace | Annotations | Instrumented? | Why |
+|---|---|---|---|---|
+| `checkout-service` | `tenant-alpha` | `instrument-with-obi: "true"` | Yes | Matches first filter item |
+| `payment-api` | `tenant-beta` | `instrument-with-obi: "true"`, `service-tier: critical` | Yes | Matches both annotations in second filter item |
+| `batch-worker` | `tenant-beta` | `instrument-with-obi: "true"` | No | Missing `service-tier: critical` — fields are AND'd |
+| `anything` | `tenant-gamma` | `instrument-with-obi: "true"` | No | `tenant-gamma` not in allow-list — no filter item compiled |
+
+Namespace isolation is structural: the controller injects `k8s_namespace` into every filter item, and OBI ANDs all fields within an item. A tenant's selectors can only ever match pods in their own namespace. Tenants have no write access to the ConfigMap.
+
+## 4. Architecture & Topology
 
 The controller supports two deployment models selected via `spec.deploymentModel`. Both models provision an identical privileged DaemonSet; they differ only in what runs inside it and how the configuration is managed.
 
-### 3.1 Standalone (default)
+### 4.1 Standalone (default)
 
 The operator deploys the official `otel/ebpf-instrumentation` daemon. OBI hooks the host kernel and streams raw OTLP traces and metrics over the network to a separately managed `OpenTelemetryCollector` instance. This is the simpler path: lower resource overhead, single backend, no pipeline processing.
 
@@ -30,7 +229,7 @@ ClusterOBIAgent (standalone)   →  OTLP  →  OpenTelemetryCollector
 otel/ebpf-instrumentation                    (user-managed, namespaced)
 ```
 
-### 3.2 Collector (spec.deploymentModel: collector)
+### 4.2 Collector (spec.deploymentModel: collector)
 
 The operator deploys a user-provided collector image that embeds the OBI receiver component alongside standard OTel Collector processors and exporters. OBI runs inside the collector process, enabling tail-based sampling, PII redaction, and multi-backend export without a separate pipeline hop.
 
@@ -136,7 +335,7 @@ graph TD
     Ctrl --> Beta
 ```
 
-## 4. Resource Configuration Model
+## 5. Resource Configuration Model
 
 Each `ClusterOBIAgent` CR instance is reconciled into a deterministic set of child resources. The controller derives the final resource manifests from three input streams: the CR spec, an environment probe (OpenShift vs. vanilla Kubernetes), and hardcoded operator defaults.
 
@@ -146,7 +345,7 @@ flowchart LR
     DEF["<b>Operator Defaults</b><br/>volumeMounts<br/>readOnlyRootFilesystem<br/>RBAC rules"]
 
     CR -->|image, nodeSelector, hostPID| DS["<b>DaemonSet</b><br/>podSpec"]
-    CR -->|mode + additionalCapabilities| CAPS["capability set\n(see §5)"]
+    CR -->|mode + additionalCapabilities| CAPS["capability set\n(see §7)"]
     CR -->|config passthrough| CM["<b>ConfigMap</b>"]
     CAPS --> DS
     DEF -->|volumes, securityContext\nbaselines| DS
@@ -162,7 +361,7 @@ flowchart LR
 | DaemonSet | `spec.template.spec.containers[0].image` | `CR .spec.image` | Defaults to `otel/ebpf-instrument:v0.9.0` |
 | DaemonSet | `spec.template.spec.nodeSelector` | `CR .spec.nodeSelector` | Empty map if unset |
 | DaemonSet | `spec.template.spec.hostPID` | `CR .spec.hostPID` | Defaults to `true` |
-| DaemonSet | `spec.template.spec.containers[0].securityContext.capabilities` | `CR .spec.mode` + `CR .spec.additionalCapabilities` | Derived deterministically; see §5 |
+| DaemonSet | `spec.template.spec.containers[0].securityContext.capabilities` | `CR .spec.mode` + `CR .spec.additionalCapabilities` | Derived deterministically; see §7 |
 | DaemonSet | `spec.template.spec.volumes` | Operator default | `emptyDir` (var-run-obi), `hostPath` (cgroup), `configMap` (config) |
 | DaemonSet | `spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem` | Operator default | Always `true` |
 | DaemonSet | `spec.template.spec.containers[0].securityContext.runAsUser` | Operator default | Always `0` |
@@ -171,7 +370,7 @@ flowchart LR
 | ClusterRole | `rules` | Operator default | `get/list/watch` on pods, nodes, services, workload resources |
 | ClusterRoleBinding | `subjects[0]` | Derived from ServiceAccount | |
 
-## 5. API Specification
+## 6. API Specification
 
 The Go type definition below is the canonical API surface for `ClusterOBIAgent`, expressed using kubebuilder markers. The rendered CRD manifest generated from this file is available at [`clusterebpfagent-crd.yaml`](./clusterebpfagent-crd.yaml).
 
@@ -361,19 +560,19 @@ type OBIInstrumentation struct {
 }
 ```
 
-## 6. Security Posture
+## 7. Security Posture
 
 OBI instruments the host kernel via eBPF and requires elevated privileges by design. This section defines exactly which privileges are granted, how they are derived, and why.
 
 > **Operator vs. helm chart default:** The upstream helm chart defaults to `privileged: true` — an acknowledged [developer experience shortcut](https://github.com/grafana/beyla/pull/528) for local environments such as Kind and Docker Desktop. The operator deliberately does not inherit this default. It provisions the minimal capability set required for the declared operation mode, which is the intended production posture.
 
-### 6.1 Host Namespaces
+### 7.1 Host Namespaces
 
 | Field | Value | Source | Rationale |
 |---|---|---|---|
 | `hostPID` | `true` | `CR .spec.hostPID` (default: `true`) | Required for cross-container process visibility; eBPF probes cannot resolve PIDs to workloads without it |
 
-### 6.2 Linux Capabilities
+### 7.2 Linux Capabilities
 
 The operator looks up the base capability set for `spec.mode` from a fixed map, then appends `spec.additionalCapabilities`.
 
@@ -401,7 +600,7 @@ caps = append(caps, spec.AdditionalCapabilities...)
 
 > **`SYS_ADMIN`:** Required for Go library-level trace context propagation via `bpf_probe_write_user`. Also required on AKS and EKS, where `kernel.perf_event_paranoid > 1` by default, making `PERFMON` alone insufficient. Users on self-managed clusters who do not need Go distributed tracing can omit it. The operator sets `OTEL_EBPF_ENFORCE_SYS_CAPS=1` unconditionally so that any capability mismatch surfaces immediately as a pod failure rather than silently degraded telemetry.
 
-### 6.3 Volume Mounts
+### 7.3 Volume Mounts
 
 | Volume | Type | Mount path | Rationale |
 |---|---|---|---|
@@ -410,7 +609,7 @@ caps = append(caps, spec.AdditionalCapabilities...)
 | `cgroup` | `hostPath: /sys/fs/cgroup` | `/sys/fs/cgroup` | cgroup membership resolution; maps sockets to container workloads |
 | `kernel-security` | `hostPath: /sys/kernel/security` | `/sys/kernel/security` (read-only) | Kernel lockdown mode detection; determines whether `bpf_probe_write_user` is available under Secure Boot |
 
-### 6.4 OpenShift: SecurityContextConstraints
+### 7.4 OpenShift: SecurityContextConstraints
 
 On OpenShift, pod security is governed by SCCs rather than raw Linux capabilities. The operator detects OpenShift at reconcile time and takes a different path: instead of setting `capabilities.add` on the container, it creates and manages a purpose-built `SecurityContextConstraint` and binds it directly to the agent `ServiceAccount`.
 
@@ -436,9 +635,9 @@ scc := &osv1.SecurityContextConstraints{
 
 The SCC binds to the agent `ServiceAccount` via the `Users` field — the OpenShift-native binding mechanism, distinct from Kubernetes RBAC. `spec.additionalCapabilities` are appended to `AllowedCapabilities` using the same logic as the vanilla Kubernetes path.
 
-## 7. Multi-Tenant Governance Model
+## 8. Multi-Tenant Governance Model
 
-### 7.1 Overview
+### 8.1 Overview
 
 The operator implements a two-CRD hierarchical governance model that separates infrastructure ownership from application targeting:
 
@@ -451,7 +650,7 @@ Cluster administrators retain exclusive control over host-level privileges. Tena
 
 This follows the same hierarchical pattern established by the [NetObserv operator's `FlowCollector` / `FlowCollectorSlice`](https://docs.openshift.com/container-platform/latest/observability/network_observability/flowcollector-api.html) model.
 
-### 7.2 Delegation Modes
+### 8.2 Delegation Modes
 
 The `ClusterOBIAgent` controls whether `OBIInstrumentation` resources are honoured via `spec.tenantDelegation.mode`:
 
@@ -468,7 +667,7 @@ spec:
       - tenant-beta
 ```
 
-### 7.3 Compilation Loop
+### 8.3 Compilation Loop
 
 During each reconciliation pass the controller:
 
@@ -502,7 +701,7 @@ discovery:
         obi.instrument: "true"
 ```
 
-### 7.4 Namespace Isolation Guarantee
+### 8.4 Namespace Isolation Guarantee
 
 The namespace isolation guarantee is structural rather than policy-based. OBI's discovery filter engine ANDs all fields within a single instrument item — a process must match every field to be instrumented. Because the controller injects `k8s_namespace` into every item, a tenant's pod annotation selector can only ever match pods in their own namespace, regardless of how broad the selector is.
 
