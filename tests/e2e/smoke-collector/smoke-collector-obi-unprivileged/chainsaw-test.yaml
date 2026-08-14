@@ -98,7 +98,6 @@ spec:
                 value: ($appPath)
             timeout: 1m
             content: |
-              ./check-ebpf-support.sh || exit 0
               POD=$(kubectl get pod -n "$NAMESPACE" -l "$POD_LABEL_SELECTOR" -o jsonpath='{.items[0].metadata.name}')
               kubectl get --raw "/api/v1/namespaces/$NAMESPACE/pods/$POD:$APP_PORT/proxy$APP_PATH"
     - name: wait-for-telemetry
@@ -118,7 +117,6 @@ spec:
                 value: k8s.namespace.name
             timeout: 5m
             content: |
-              ./check-ebpf-support.sh || exit 0
               START=$(date +%s)
               while true; do
                 ELAPSED=$(( $(date +%s) - START ))
@@ -150,7 +148,6 @@ spec:
             shell: /bin/bash
             timeout: 2m
             content: |
-              ./check-ebpf-support.sh || exit 0
               PODS=$(kubectl get pod -n "$NAMESPACE" -l "$COLLECTOR_LABEL_SELECTOR" -o jsonpath='{.items[*].metadata.name}')
               for i in {1..12}; do
                 for POD in $PODS; do
