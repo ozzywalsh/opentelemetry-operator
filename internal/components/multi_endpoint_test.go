@@ -4,6 +4,7 @@
 package components_test
 
 import (
+	"crypto/tls"
 	"fmt"
 	"testing"
 
@@ -517,6 +518,57 @@ func TestMultiPortReceiver_GetDefaultConfig(t *testing.T) {
 			assert.Equalf(t, tt.want, got, "GetDefaultConfig(%v, %v)", tt.args.logger, tt.args.config)
 		})
 	}
+}
+
+// TestMultiPortReceiver_GetDefaultConfigTLSProfile checks that the TLS profile
+// reaches both legs of a multi-endpoint receiver such as OTLP.
+func TestMultiPortReceiver_GetDefaultConfigTLSProfile(t *testing.T) {
+	parser := components.NewMultiPortReceiverBuilder("otlp").
+		AddPortMapping(components.NewProtocolBuilder("grpc", 4317).WithDefaultRecAddress("0.0.0.0")).
+		AddPortMapping(components.NewProtocolBuilder("http", 4318).WithDefaultRecAddress("0.0.0.0")).
+		MustBuild()
+
+	profile := components.NewStaticTLSProfile(
+		tls.VersionTLS12,
+		[]uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+		[]tls.CurveID{tls.X25519, tls.CurveP256},
+	)
+
+	config := map[string]any{
+		"protocols": map[string]any{
+			"grpc": map[string]any{
+				"tls": map[string]any{},
+			},
+			"http": map[string]any{
+				"tls": map[string]any{
+					"curve_preferences": []string{"P521"},
+				},
+			},
+		},
+	}
+
+	got, err := parser.GetDefaultConfig(logr.Discard(), config, components.WithTLSProfile(profile))
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"protocols": map[string]any{
+			"grpc": map[string]any{
+				"endpoint": "0.0.0.0:4317",
+				"tls": map[string]any{
+					"min_version":       "1.2",
+					"cipher_suites":     []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+					"curve_preferences": []string{"X25519", "P256"},
+				},
+			},
+			"http": map[string]any{
+				"endpoint": "0.0.0.0:4318",
+				"tls": map[string]any{
+					"min_version":       "1.2",
+					"cipher_suites":     []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+					"curve_preferences": []string{"P521"},
+				},
+			},
+		},
+	}, got)
 }
 
 func TestMultiMustBuildPanics(t *testing.T) {

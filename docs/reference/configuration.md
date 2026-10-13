@@ -58,9 +58,10 @@ Nested blocks use lowercase keys matching the struct tags in `internal/config/co
 | YAML key | CLI flag | Environment variable | Default | Description |
 |----------|----------|----------------------|---------|-------------|
 | `tls.useclusterprofile` | `--tls-cluster-profile` | `TLS_CLUSTER_PROFILE` | `false` | Read TLS profile from OpenShift APIServer CR |
-| `tls.configureoperands` | `--tls-configure-operands` | `TLS_CONFIGURE_OPERANDS` | `false` | Apply TLS min version/ciphers to operands |
+| `tls.configureoperands` | `--tls-configure-operands` | `TLS_CONFIGURE_OPERANDS` | `false` | Apply TLS min version, ciphers and groups to operands |
 | `tls.minversion` | `--tls-min-version` | `TLS_MIN_VERSION` | `VersionTLS12` | Minimum TLS version for operands |
 | `tls.ciphersuites` | `--tls-cipher-suites` | `TLS_CIPHER_SUITES` | — | Comma-separated cipher suites |
+| `tls.curves` | `--tls-curve-preferences` | `TLS_CURVE_PREFERENCES` | — | Comma-separated supported groups, in preference order |
 
 ## Logging encoder (`zap:` block in YAML)
 

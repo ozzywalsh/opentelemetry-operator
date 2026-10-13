@@ -91,7 +91,7 @@ func SetupManager(cfg *config.Config, configFile string, opts zap.Options, schem
 		for _, t := range tlsOptsFuncs {
 			t(tlsCfg)
 		}
-		cfg.Internal.OperandTLSProfile = components.NewStaticTLSProfile(tlsCfg.MinVersion, tlsCfg.CipherSuites)
+		cfg.Internal.OperandTLSProfile = components.NewStaticTLSProfile(tlsCfg.MinVersion, tlsCfg.CipherSuites, tlsCfg.CurvePreferences)
 	}
 
 	metricsOptions := buildMetricsOptions(*cfg, tlsOptsFuncs)
@@ -244,14 +244,6 @@ func parseWatchNamespaces(watchNamespace string) map[string]cache.Config {
 }
 
 func buildTLSOptions(cfg config.Config, restCfg *rest.Config, scheme *k8sruntime.Scheme) ([]func(*tls.Config), configv1.TLSProfileSpec) {
-	optionsTlSOptsFuncs := []func(*tls.Config){
-		func(c *tls.Config) {
-			if tlsErr := cfg.TLS.ApplyTLSConfig(c); tlsErr != nil {
-				setupLog.Error(tlsErr, "error setting up TLS")
-			}
-		},
-	}
-
 	var initialTLSProfileSpec configv1.TLSProfileSpec
 	if cfg.TLS.UseClusterProfile {
 		tempClient, errClient := client.New(restCfg, client.Options{Scheme: scheme})
@@ -266,16 +258,33 @@ func buildTLSOptions(cfg config.Config, restCfg *rest.Config, scheme *k8sruntime
 			setupLog.Error(err, "unable to get TLS profile from cluster")
 			os.Exit(1)
 		}
+	}
 
-		tlsConfigFunc, unsupportedCiphers := openshifttls.NewTLSConfigFromProfile(initialTLSProfileSpec)
-		if len(unsupportedCiphers) > 0 {
-			setupLog.Info("some TLS ciphers from cluster profile are not supported by Go", "unsupportedCiphers", unsupportedCiphers)
+	return tlsOptionFuncs(cfg.TLS, initialTLSProfileSpec), initialTLSProfileSpec
+}
+
+// tlsOptionFuncs returns the TLS option functions in the order they are applied
+// to a tls.Config. The manual settings are applied first and the cluster
+// profile second, so the cluster profile wins for every field it sets.
+func tlsOptionFuncs(tlsCfg config.TLSConfig, clusterProfile configv1.TLSProfileSpec) []func(*tls.Config) {
+	optionsTlSOptsFuncs := []func(*tls.Config){
+		func(c *tls.Config) {
+			if tlsErr := tlsCfg.ApplyTLSConfig(c); tlsErr != nil {
+				setupLog.Error(tlsErr, "error setting up TLS")
+			}
+		},
+	}
+
+	if tlsCfg.UseClusterProfile {
+		tlsConfigFunc, unsupported := openshifttls.NewTLSConfigFromProfile(clusterProfile)
+		if len(unsupported) > 0 {
+			setupLog.Info("some TLS ciphers or groups from cluster profile are not supported by Go", "unsupported", unsupported)
 		}
 
 		optionsTlSOptsFuncs = append(optionsTlSOptsFuncs, tlsConfigFunc)
 	}
 
-	return optionsTlSOptsFuncs, initialTLSProfileSpec
+	return optionsTlSOptsFuncs
 }
 
 func buildMetricsOptions(cfg config.Config, tlsOpts []func(*tls.Config)) metricsserver.Options {

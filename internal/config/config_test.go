@@ -118,3 +118,10 @@ func TestApply(t *testing.T) {
 		})
 	}
 }
+
+func TestTLSCurvePreferencesEnvVar(t *testing.T) {
+	t.Setenv("TLS_CURVE_PREFERENCES", "X25519,CurveP256")
+	c := New()
+	ApplyEnvVars(&c)
+	require.Equal(t, []string{"X25519", "CurveP256"}, c.TLS.Curves)
+}

@@ -91,6 +91,9 @@ func ApplyEnvVars(cfg *Config) {
 	if v, ok := os.LookupEnv("TLS_CIPHER_SUITES"); ok {
 		cfg.TLS.CipherSuites = strings.Split(v, ",")
 	}
+	if v, ok := os.LookupEnv("TLS_CURVE_PREFERENCES"); ok {
+		cfg.TLS.Curves = strings.Split(v, ",")
+	}
 	if v, ok := os.LookupEnv("LABELS_FILTER"); ok {
 		cfg.LabelsFilter = strings.Split(v, ",")
 	}
