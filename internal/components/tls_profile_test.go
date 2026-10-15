@@ -57,48 +57,85 @@ func TestStaticTLSProfile(t *testing.T) {
 		name                string
 		minVersion          uint16
 		ciphers             []uint16
+		curves              []tls.CurveID
 		expectedMinVersion  uint16
 		expectedGolangVer   string
 		expectedOTELVer     string
 		expectedCiphers     []uint16
 		expectedCipherNames []string
+		expectedCurveIDs    []tls.CurveID
+		expectedCurveNames  []string
 	}{
 		{
 			name:                "TLS 1.2 with custom ciphers",
 			minVersion:          tls.VersionTLS12,
 			ciphers:             []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_AES_128_GCM_SHA256},
+			curves:              []tls.CurveID{tls.X25519, tls.CurveP256},
 			expectedMinVersion:  tls.VersionTLS12,
 			expectedGolangVer:   "TLS 1.2",
 			expectedOTELVer:     "1.2",
 			expectedCiphers:     []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_AES_128_GCM_SHA256},
 			expectedCipherNames: []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "TLS_AES_128_GCM_SHA256"},
+			expectedCurveIDs:    []tls.CurveID{tls.X25519, tls.CurveP256},
+			expectedCurveNames:  []string{"X25519", "P256"},
 		},
 		{
 			name:                "TLS 1.3 suppresses ciphers (crypto/tls invariant)",
 			minVersion:          tls.VersionTLS13,
 			ciphers:             []uint16{tls.TLS_AES_128_GCM_SHA256, tls.TLS_AES_256_GCM_SHA384},
+			curves:              []tls.CurveID{tls.X25519, tls.CurveP384},
 			expectedMinVersion:  tls.VersionTLS13,
 			expectedGolangVer:   "TLS 1.3",
 			expectedOTELVer:     "1.3",
 			expectedCiphers:     nil,
 			expectedCipherNames: nil,
+			// Unlike cipher suites, supported groups remain configurable under TLS 1.3.
+			expectedCurveIDs:   []tls.CurveID{tls.X25519, tls.CurveP384},
+			expectedCurveNames: []string{"X25519", "P384"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			profile := NewStaticTLSProfile(tt.minVersion, tt.ciphers)
+			profile := NewStaticTLSProfile(tt.minVersion, tt.ciphers, tt.curves)
 			assert.Equal(t, tt.expectedMinVersion, profile.MinTLSVersion())
 			assert.Equal(t, tt.expectedGolangVer, profile.MinTLSVersionGolang())
 			assert.Equal(t, tt.expectedOTELVer, profile.MinTLSVersionOTEL())
 			assert.Equal(t, tt.expectedCiphers, profile.CipherSuites())
 			assert.Equal(t, tt.expectedCipherNames, profile.CipherSuiteNames())
+			assert.Equal(t, tt.expectedCurveIDs, profile.CurveIDs())
+			assert.Equal(t, tt.expectedCurveNames, profile.CurveNamesOTEL())
 		})
 	}
 }
 
+func TestCurveNamesOTEL(t *testing.T) {
+	// All groups from library-go's TLS profiles must translate; the collector
+	// spelling cannot be derived from CurveID.String(). See TRACING-6893.
+	curves := []tls.CurveID{
+		tls.X25519,
+		tls.CurveP256,
+		tls.CurveP384,
+		tls.CurveP521,
+		tls.X25519MLKEM768,
+		tls.SecP256r1MLKEM768,
+		tls.SecP384r1MLKEM1024,
+	}
+	expected := []string{
+		"X25519",
+		"P256",
+		"P384",
+		"P521",
+		"X25519MLKEM768",
+		"SecP256r1MLKEM768",
+		"SecP384r1MLKEM1024",
+	}
+	profile := NewStaticTLSProfile(tls.VersionTLS12, nil, curves)
+	assert.Equal(t, expected, profile.CurveNamesOTEL())
+}
+
 func TestStaticTLSProfileProvider(t *testing.T) {
-	profile := NewStaticTLSProfile(tls.VersionTLS12, []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256})
+	profile := NewStaticTLSProfile(tls.VersionTLS12, []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}, nil)
 	provider := StaticTLSProfileProvider{Profile: profile}
 
 	res, err := provider.GetTLSProfile(context.Background())
@@ -107,8 +144,8 @@ func TestStaticTLSProfileProvider(t *testing.T) {
 }
 
 func TestApplyTLSProfileDefaults(t *testing.T) {
-	defaultProfile := NewStaticTLSProfile(tls.VersionTLS12, []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256})
-	tls13Profile := NewStaticTLSProfile(tls.VersionTLS13, []uint16{tls.TLS_AES_128_GCM_SHA256})
+	defaultProfile := NewStaticTLSProfile(tls.VersionTLS12, []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256}, []tls.CurveID{tls.X25519, tls.CurveP256})
+	tls13Profile := NewStaticTLSProfile(tls.VersionTLS13, []uint16{tls.TLS_AES_128_GCM_SHA256}, []tls.CurveID{tls.X25519, tls.CurveP384})
 
 	tests := []struct {
 		name           string
@@ -135,6 +172,7 @@ func TestApplyTLSProfileDefaults(t *testing.T) {
 			expectedConfig: &TLSConfig{
 				MinVersion: "1.2",
 				Ciphers:    []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+				Curves:     []string{"X25519", "P256"},
 			},
 		},
 		{
@@ -147,6 +185,7 @@ func TestApplyTLSProfileDefaults(t *testing.T) {
 			expectedConfig: &TLSConfig{
 				MinVersion: "1.3",
 				Ciphers:    []string{"TLS_CUSTOM_CIPHER"},
+				Curves:     []string{"X25519", "P256"},
 			},
 		},
 		{
@@ -158,6 +197,7 @@ func TestApplyTLSProfileDefaults(t *testing.T) {
 			expectedConfig: &TLSConfig{
 				MinVersion: "1.3",
 				Ciphers:    []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+				Curves:     []string{"X25519", "P256"},
 			},
 		},
 		{
@@ -169,6 +209,7 @@ func TestApplyTLSProfileDefaults(t *testing.T) {
 			expectedConfig: &TLSConfig{
 				MinVersion: "1.2",
 				Ciphers:    []string{"TLS_CUSTOM_CIPHER"},
+				Curves:     []string{"X25519", "P256"},
 			},
 		},
 		{
@@ -180,6 +221,7 @@ func TestApplyTLSProfileDefaults(t *testing.T) {
 			expectedConfig: &TLSConfig{
 				MinVersion: "1.2",
 				Ciphers:    []string{},
+				Curves:     []string{"X25519", "P256"},
 			},
 		},
 		{
@@ -189,6 +231,33 @@ func TestApplyTLSProfileDefaults(t *testing.T) {
 			expectedConfig: &TLSConfig{
 				MinVersion: "1.3",
 				Ciphers:    nil,
+				// Curves are still populated: supported groups remain
+				// configurable under TLS 1.3, unlike cipher suites.
+				Curves: []string{"X25519", "P384"},
+			},
+		},
+		{
+			name: "Preserves user-defined Curves",
+			initialConfig: &TLSConfig{
+				Curves: []string{"X25519"},
+			},
+			profile: defaultProfile,
+			expectedConfig: &TLSConfig{
+				MinVersion: "1.2",
+				Ciphers:    []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+				Curves:     []string{"X25519"},
+			},
+		},
+		{
+			name: "Preserves explicitly empty Curves",
+			initialConfig: &TLSConfig{
+				Curves: []string{},
+			},
+			profile: defaultProfile,
+			expectedConfig: &TLSConfig{
+				MinVersion: "1.2",
+				Ciphers:    []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+				Curves:     []string{},
 			},
 		},
 	}

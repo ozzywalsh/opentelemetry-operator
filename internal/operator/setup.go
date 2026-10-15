@@ -91,7 +91,7 @@ func SetupManager(cfg *config.Config, configFile string, opts zap.Options, schem
 		for _, t := range tlsOptsFuncs {
 			t(tlsCfg)
 		}
-		cfg.Internal.OperandTLSProfile = components.NewStaticTLSProfile(tlsCfg.MinVersion, tlsCfg.CipherSuites)
+		cfg.Internal.OperandTLSProfile = components.NewStaticTLSProfile(tlsCfg.MinVersion, tlsCfg.CipherSuites, tlsCfg.CurvePreferences)
 	}
 
 	metricsOptions := buildMetricsOptions(*cfg, tlsOptsFuncs)
@@ -269,7 +269,7 @@ func buildTLSOptions(cfg config.Config, restCfg *rest.Config, scheme *k8sruntime
 
 		tlsConfigFunc, unsupportedCiphers := openshifttls.NewTLSConfigFromProfile(initialTLSProfileSpec)
 		if len(unsupportedCiphers) > 0 {
-			setupLog.Info("some TLS ciphers from cluster profile are not supported by Go", "unsupportedCiphers", unsupportedCiphers)
+			setupLog.Info("some TLS ciphers or groups from cluster profile are not supported by Go", "unsupported", unsupportedCiphers)
 		}
 
 		optionsTlSOptsFuncs = append(optionsTlSOptsFuncs, tlsConfigFunc)
