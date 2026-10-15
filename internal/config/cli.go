@@ -52,10 +52,11 @@ func CreateCLIParser(cfg Config) *pflag.FlagSet {
 	f.StringArray("annotations-filter", cfg.AnnotationsFilter, "Annotations to filter away from propagating onto deploys. It should be a string array containing patterns, which are literal strings optionally containing a * wildcard character. Example: --annotations-filter=.*filter.out will filter out annotations that looks like: annotation.filter.out: true")
 	f.String("fips-disabled-components", cfg.FipsDisabledComponents, "Disabled collector components when operator runs on FIPS enabled platform. Example flag value =receiver.foo,receiver.bar,exporter.baz")
 	f.Int("webhook-port", cfg.WebhookPort, "The port the webhook endpoint binds to.")
-	f.Bool("tls-cluster-profile", false, "Retrieves the TLS profile (min version and ciphers) from the cluster. Supported only on OpenShift clusters. The TLS profile is obtained from APIServer CR.")
-	f.Bool("tls-configure-operands", false, "Configures TLS version and cyphers in operands.")
+	f.Bool("tls-cluster-profile", false, "Retrieves the TLS profile (min version, ciphers and groups) from the cluster. Supported only on OpenShift clusters. The TLS profile is obtained from APIServer CR.")
+	f.Bool("tls-configure-operands", false, "Configures TLS version, cyphers and groups in operands.")
 	f.String("tls-min-version", "VersionTLS12", "Minimum TLS version supported. Value must match version names from https://golang.org/pkg/crypto/tls/#pkg-constants.")
 	f.StringSlice("tls-cipher-suites", nil, "Comma-separated list of cipher suites for the server. Values are from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants). If omitted, the default Go cipher suites will be used")
+	f.StringSlice("tls-curve-preferences", nil, "Comma-separated list of supported groups for the server, in preference order. Values are curve names from tls package constants (https://golang.org/pkg/crypto/tls/#pkg-constants). If omitted, the default Go curves will be used")
 	f.String("zap-message-key", "message", "The message key to be used in the customized Log Encoder")
 	f.String("zap-level-key", "level", "The level key to be used in the customized Log Encoder")
 	f.String("zap-time-key", "timestamp", "The time key to be used in the customized Log Encoder")
@@ -157,6 +158,8 @@ func ApplyCLI(cfg *Config) error {
 				cfg.TLS.MinVersion, _ = f.GetString("tls-min-version")
 			case "tls-cipher-suites":
 				cfg.TLS.CipherSuites, _ = f.GetStringSlice("tls-cipher-suites")
+			case "tls-curve-preferences":
+				cfg.TLS.Curves, _ = f.GetStringSlice("tls-curve-preferences")
 			case "zap-message-key":
 				cfg.Zap.MessageKey, _ = f.GetString("zap-message-key")
 			case "zap-level-key":

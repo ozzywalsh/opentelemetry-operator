@@ -1,0 +1,15 @@
+change_type: enhancement
+component: operator, collector
+note: Propagate the TLS security profile's supported groups to operands as `curve_preferences`, and add a `--tls-curve-preferences` operator flag.
+issues: [4669]
+subtext: |
+  `--tls-configure-operands` now injects `curve_preferences` into generated collector
+  configuration alongside `min_version` and `cipher_suites`, derived from the `groups`
+  field of the OpenShift `APIServer` CR when `--tls-cluster-profile` is enabled.
+
+  Added operator flag `--tls-curve-preferences` (environment variable `TLS_CURVE_PREFERENCES`),
+  which takes Go `CurveID` names. It is overridden by the cluster profile's `groups` when
+  `--tls-cluster-profile` is set and the profile specifies them.
+
+  Unlike cipher suites, supported groups are propagated regardless of the minimum TLS version,
+  because Go permits configuring them under TLS 1.3.

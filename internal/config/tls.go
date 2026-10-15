@@ -6,6 +6,9 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	k8sapiflag "k8s.io/component-base/cli/flag"
 )
@@ -17,6 +20,37 @@ type TLSConfig struct {
 	ConfigureOperands bool
 	MinVersion        string
 	CipherSuites      []string
+	Curves            []string
+}
+
+// curveIDs maps Go crypto/tls curve constant names to their tls.CurveID, so
+// that --tls-curve-preferences uses the same vocabulary as --tls-min-version
+// and --tls-cipher-suites.
+var curveIDs = map[string]tls.CurveID{
+	"X25519":             tls.X25519,
+	"CurveP256":          tls.CurveP256,
+	"CurveP384":          tls.CurveP384,
+	"CurveP521":          tls.CurveP521,
+	"X25519MLKEM768":     tls.X25519MLKEM768,
+	"SecP256r1MLKEM768":  tls.SecP256r1MLKEM768,
+	"SecP384r1MLKEM1024": tls.SecP384r1MLKEM1024,
+}
+
+// TLSCurvePreferences returns the curve IDs for the given Go crypto/tls curve
+// constant names.
+func TLSCurvePreferences(names []string) ([]tls.CurveID, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	curves := make([]tls.CurveID, 0, len(names))
+	for _, name := range names {
+		id, ok := curveIDs[name]
+		if !ok {
+			return nil, fmt.Errorf("curve %s not supported or doesn't exist, supported curves are %s", name, strings.Join(slices.Sorted(maps.Keys(curveIDs)), ", "))
+		}
+		curves = append(curves, id)
+	}
+	return curves, nil
 }
 
 // ApplyTLSConfig get the option from command argument (tlsConfig), check the validity through k8s apiflag
@@ -34,7 +68,13 @@ func (tlsOpt TLSConfig) ApplyTLSConfig(cfg *tls.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to convert TLS cipher suite name to ID: %w", err)
 	}
+	curvePreferences, err := TLSCurvePreferences(tlsOpt.Curves)
+	if err != nil {
+		return fmt.Errorf("failed to convert TLS curve name to ID: %w", err)
+	}
+
 	cfg.MinVersion = tlsVersion
 	cfg.CipherSuites = cipherSuiteIDs
+	cfg.CurvePreferences = curvePreferences
 	return nil
 }
