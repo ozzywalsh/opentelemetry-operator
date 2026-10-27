@@ -1,0 +1,27 @@
+collector_namespace: default
+collector_selector:
+  matchlabels:
+    app.kubernetes.io/instance: default.test
+    app.kubernetes.io/managed-by: opentelemetry-operator
+prometheus_cr:
+  enabled: true
+  scrape_interval: 60s
+collector_not_ready_grace_period: 30s
+https:
+  enabled: true
+  listen_addr: :8443
+  ca_file_path: /path/to/ca.pem
+  tls_cert_file_path: /path/to/cert.pem
+  tls_key_file_path: /path/to/key.pem
+  min_version: VersionTLS13
+  cipher_suites:
+    - TLS_AES_128_GCM_SHA256
+    - TLS_AES_256_GCM_SHA384
+  curve_preferences:
+    - X25519
+    - CurveP256
+config:
+  scrape_configs:
+  - job_name: prometheus
+    static_configs:
+    - targets: ["prom.domain:9001"]

@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	k8sapiflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
@@ -186,11 +187,14 @@ type PrometheusCRConfig struct {
 }
 
 type HTTPSServerConfig struct {
-	Enabled         bool   `yaml:"enabled,omitempty"`
-	ListenAddr      string `yaml:"listen_addr,omitempty"`
-	CAFilePath      string `yaml:"ca_file_path,omitempty"`
-	TLSCertFilePath string `yaml:"tls_cert_file_path,omitempty"`
-	TLSKeyFilePath  string `yaml:"tls_key_file_path,omitempty"`
+	Enabled          bool     `yaml:"enabled,omitempty"`
+	ListenAddr       string   `yaml:"listen_addr,omitempty"`
+	CAFilePath       string   `yaml:"ca_file_path,omitempty"`
+	TLSCertFilePath  string   `yaml:"tls_cert_file_path,omitempty"`
+	TLSKeyFilePath   string   `yaml:"tls_key_file_path,omitempty"`
+	MinVersion       string   `yaml:"min_version,omitempty"`
+	CipherSuites     []string `yaml:"cipher_suites,omitempty"`
+	CurvePreferences []string `yaml:"curve_preferences,omitempty"`
 }
 
 // TelemetryConfig holds the self-telemetry settings for the Target Allocator.
@@ -481,6 +485,24 @@ func LoadFromCLI(target *Config, flagSet *pflag.FlagSet) error {
 		target.AllowInsecureAuthSecrets = allowInsecureAuthSecrets
 	}
 
+	if httpsMinVersion, changed, err := getHttpsMinVersion(flagSet); err != nil {
+		return err
+	} else if changed {
+		target.HTTPS.MinVersion = httpsMinVersion
+	}
+
+	if httpsCipherSuites, changed, err := getHttpsCipherSuites(flagSet); err != nil {
+		return err
+	} else if changed {
+		target.HTTPS.CipherSuites = httpsCipherSuites
+	}
+
+	if httpsCurvePreferences, changed, err := getHttpsCurvePreferences(flagSet); err != nil {
+		return err
+	} else if changed {
+		target.HTTPS.CurvePreferences = httpsCurvePreferences
+	}
+
 	return nil
 }
 
@@ -669,12 +691,29 @@ func (c HTTPSServerConfig) NewTLSConfig(logger logr.Logger) (*tls.Config, *certw
 		}
 	})
 
+	minVersion, err := parseTLSMinVersion(c.MinVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cipherSuiteIDs, err := k8sapiflag.TLSCipherSuites(c.CipherSuites)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid cipher_suites: %w", err)
+	}
+
+	curveIDs, err := parseCurvePreferences(c.CurvePreferences)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid curve_preferences: %w", err)
+	}
+
 	tlsConfig := &tls.Config{
 		GetCertificate: certWatcher.GetCertificate,
 		// Request client certificate but don't verify automatically
 		// We'll do custom verification in VerifyConnection with the dynamic CA pool
-		ClientAuth: tls.RequestClientCert,
-		MinVersion: tls.VersionTLS12,
+		ClientAuth:       tls.RequestClientCert,
+		MinVersion:       minVersion,
+		CipherSuites:     cipherSuiteIDs,
+		CurvePreferences: curveIDs,
 		// Use VerifyConnection for dynamic CA pool access
 		// This allows the CA pool to be reloaded at runtime
 		VerifyConnection: func(cs tls.ConnectionState) error {
@@ -704,6 +743,45 @@ func (c HTTPSServerConfig) NewTLSConfig(logger logr.Logger) (*tls.Config, *certw
 	}
 
 	return tlsConfig, certWatcher, nil
+}
+
+// parseTLSMinVersion returns the TLS version ID for the given name, defaulting to TLS 1.2.
+func parseTLSMinVersion(name string) (uint16, error) {
+	if name == "" {
+		return tls.VersionTLS12, nil
+	}
+	v, err := k8sapiflag.TLSVersion(name)
+	if err != nil {
+		return 0, fmt.Errorf("invalid min_version %q: %w", name, err)
+	}
+	return v, nil
+}
+
+// curveNames maps Go CurveID names to their constants.
+var curveNames = map[string]tls.CurveID{
+	"CurveP256":          tls.CurveP256,
+	"CurveP384":          tls.CurveP384,
+	"CurveP521":          tls.CurveP521,
+	"X25519":             tls.X25519,
+	"X25519MLKEM768":     tls.X25519MLKEM768,
+	"SecP256r1MLKEM768":  tls.SecP256r1MLKEM768,
+	"SecP384r1MLKEM1024": tls.SecP384r1MLKEM1024,
+}
+
+// parseCurvePreferences converts Go CurveID names to tls.CurveID values.
+func parseCurvePreferences(names []string) ([]tls.CurveID, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	ids := make([]tls.CurveID, 0, len(names))
+	for _, name := range names {
+		id, ok := curveNames[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown curve %q", name)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // GetSecretsAllowList returns the namespaces to watch for secrets as a map.

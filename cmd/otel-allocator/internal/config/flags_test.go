@@ -20,6 +20,9 @@ func TestGetFlagSet(t *testing.T) {
 	assert.NotNil(t, fs.Lookup(prometheusCREnabledFlagName), "Flag %s not found", prometheusCREnabledFlagName)
 	assert.NotNil(t, fs.Lookup(kubeConfigPathFlagName), "Flag %s not found", kubeConfigPathFlagName)
 	assert.NotNil(t, fs.Lookup(allowInsecureAuthSecretsFlagName), "Flag %s not found", allowInsecureAuthSecretsFlagName)
+	assert.NotNil(t, fs.Lookup(httpsMinVersionFlagName), "Flag %s not found", httpsMinVersionFlagName)
+	assert.NotNil(t, fs.Lookup(httpsCipherSuitesFlagName), "Flag %s not found", httpsCipherSuitesFlagName)
+	assert.NotNil(t, fs.Lookup(httpsCurvePreferencesFlagName), "Flag %s not found", httpsCurvePreferencesFlagName)
 }
 
 func TestFlagGetters(t *testing.T) {
@@ -93,6 +96,33 @@ func TestFlagGetters(t *testing.T) {
 			expectedValue: true,
 			getterFunc: func(fs *pflag.FlagSet) (any, error) {
 				value, _, err := getAllowInsecureAuthSecrets(fs)
+				return value, err
+			},
+		},
+		{
+			name:          "HttpsMinVersion",
+			flagArgs:      []string{"--" + httpsMinVersionFlagName, "VersionTLS13"},
+			expectedValue: "VersionTLS13",
+			getterFunc: func(fs *pflag.FlagSet) (any, error) {
+				value, _, err := getHttpsMinVersion(fs)
+				return value, err
+			},
+		},
+		{
+			name:          "HttpsCipherSuites",
+			flagArgs:      []string{"--" + httpsCipherSuitesFlagName, "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"},
+			expectedValue: []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"},
+			getterFunc: func(fs *pflag.FlagSet) (any, error) {
+				value, _, err := getHttpsCipherSuites(fs)
+				return value, err
+			},
+		},
+		{
+			name:          "HttpsCurvePreferences",
+			flagArgs:      []string{"--" + httpsCurvePreferencesFlagName, "X25519,CurveP256"},
+			expectedValue: []string{"X25519", "CurveP256"},
+			getterFunc: func(fs *pflag.FlagSet) (any, error) {
+				value, _, err := getHttpsCurvePreferences(fs)
 				return value, err
 			},
 		},

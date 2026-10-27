@@ -1329,6 +1329,69 @@ kube_config_file_path: "` + kubeConfigPath + `"
 		assert.True(t, config.PrometheusCR.Enabled, "CLI should override config file for prometheus CR enabled")
 	})
 
+	t.Run("command-line has priority over config file for TLS profile fields", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configContent := `
+https:
+  min_version: VersionTLS12
+  cipher_suites:
+    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  curve_preferences:
+    - CurveP256
+`
+		configPath := filepath.Join(tempDir, "config.yaml")
+		err := os.WriteFile(configPath, []byte(configContent), 0o600)
+		require.NoError(t, err)
+
+		kubeConfigPath := createDummyKubeConfig(t, tempDir)
+
+		args := []string{
+			"--" + configFilePathFlagName + "=" + configPath,
+			"--" + kubeConfigPathFlagName + "=" + kubeConfigPath,
+			"--" + httpsMinVersionFlagName + "=VersionTLS13",
+			"--" + httpsCipherSuitesFlagName + "=TLS_AES_128_GCM_SHA256",
+			"--" + httpsCurvePreferencesFlagName + "=X25519,CurveP384",
+		}
+
+		config, err := Load(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, "VersionTLS13", config.HTTPS.MinVersion)
+		assert.Equal(t, []string{"TLS_AES_128_GCM_SHA256"}, config.HTTPS.CipherSuites)
+		assert.Equal(t, []string{"X25519", "CurveP384"}, config.HTTPS.CurvePreferences)
+	})
+
+	t.Run("TLS profile fields loaded from config file", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configContent := `
+https:
+  min_version: VersionTLS13
+  cipher_suites:
+    - TLS_AES_128_GCM_SHA256
+    - TLS_AES_256_GCM_SHA384
+  curve_preferences:
+    - X25519
+    - CurveP256
+`
+		configPath := filepath.Join(tempDir, "config.yaml")
+		err := os.WriteFile(configPath, []byte(configContent), 0o600)
+		require.NoError(t, err)
+
+		kubeConfigPath := createDummyKubeConfig(t, tempDir)
+
+		args := []string{
+			"--" + configFilePathFlagName + "=" + configPath,
+			"--" + kubeConfigPathFlagName + "=" + kubeConfigPath,
+		}
+
+		config, err := Load(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, "VersionTLS13", config.HTTPS.MinVersion)
+		assert.Equal(t, []string{"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384"}, config.HTTPS.CipherSuites)
+		assert.Equal(t, []string{"X25519", "CurveP256"}, config.HTTPS.CurvePreferences)
+	})
+
 	t.Run("filter strategy is normalized on load", func(t *testing.T) {
 		for _, tc := range []struct {
 			name     string

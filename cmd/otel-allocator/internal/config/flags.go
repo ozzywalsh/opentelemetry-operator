@@ -23,6 +23,9 @@ const (
 	httpsTLSCertFilePathFlagName     = "https-tls-cert-file"
 	httpsTLSKeyFilePathFlagName      = "https-tls-key-file"
 	allowInsecureAuthSecretsFlagName = "allow-insecure-auth-secrets"
+	httpsMinVersionFlagName          = "https-min-version"
+	httpsCipherSuitesFlagName        = "https-cipher-suites"
+	httpsCurvePreferencesFlagName    = "https-curve-preferences"
 )
 
 // We can't bind this flag to our FlagSet, so we need to handle it separately.
@@ -40,6 +43,9 @@ func getFlagSet(errorHandling pflag.ErrorHandling) *pflag.FlagSet {
 	flagSet.String(httpsTLSCertFilePathFlagName, "", "The path to the HTTPS server TLS certificate file.")
 	flagSet.String(httpsTLSKeyFilePathFlagName, "", "The path to the HTTPS server TLS key file.")
 	flagSet.Bool(allowInsecureAuthSecretsFlagName, false, "Serve scrape configs with secret values over plain HTTP without mTLS. Only enable when transport is secured by a service mesh or equivalent.")
+	flagSet.String(httpsMinVersionFlagName, "", "Minimum TLS version for the HTTPS server. Values are from crypto/tls constants (e.g. VersionTLS12, VersionTLS13). Overrides the config file value.")
+	flagSet.StringSlice(httpsCipherSuitesFlagName, nil, "Comma-separated list of TLS cipher suites for the HTTPS server. Values are from crypto/tls constants. Overrides the config file value.")
+	flagSet.StringSlice(httpsCurvePreferencesFlagName, nil, "Comma-separated list of TLS curve preferences for the HTTPS server. Values are Go CurveID names (e.g. X25519, CurveP256). Overrides the config file value.")
 	zapFlagSet := flag.NewFlagSet("", flag.ErrorHandling(errorHandling))
 	zapCmdLineOpts.BindFlags(zapFlagSet)
 	flagSet.AddGoFlagSet(zapFlagSet)
@@ -86,6 +92,18 @@ func getAllowInsecureAuthSecrets(flagSet *pflag.FlagSet) (value, changed bool, e
 	return getFlagValueAndChangedBool(flagSet, allowInsecureAuthSecretsFlagName)
 }
 
+func getHttpsMinVersion(flagSet *pflag.FlagSet) (value string, changed bool, err error) {
+	return getFlagValueAndChangedString(flagSet, httpsMinVersionFlagName)
+}
+
+func getHttpsCipherSuites(flagSet *pflag.FlagSet) (value []string, changed bool, err error) {
+	return getFlagValueAndChangedStringSlice(flagSet, httpsCipherSuitesFlagName)
+}
+
+func getHttpsCurvePreferences(flagSet *pflag.FlagSet) (value []string, changed bool, err error) {
+	return getFlagValueAndChangedStringSlice(flagSet, httpsCurvePreferencesFlagName)
+}
+
 // getFlagValueAndChanged returns the given flag's string value and whether it was changed.
 func getFlagValueAndChangedString(flagSet *pflag.FlagSet, flagName string) (value string, changed bool, err error) {
 	if changed = flagSet.Changed(flagName); !changed {
@@ -96,12 +114,21 @@ func getFlagValueAndChangedString(flagSet *pflag.FlagSet, flagName string) (valu
 	return value, changed, err
 }
 
-// getFlagValueAndChanged returns the given flag's string value and whether it was changed.
+// getFlagValueAndChangedBool returns the given flag's bool value and whether it was changed.
 func getFlagValueAndChangedBool(flagSet *pflag.FlagSet, flagName string) (value, changed bool, err error) {
 	if changed = flagSet.Changed(flagName); !changed {
 		value, err = false, nil
 		return value, changed, err
 	}
 	value, err = flagSet.GetBool(flagName)
+	return value, changed, err
+}
+
+// getFlagValueAndChangedStringSlice returns the given flag's string slice value and whether it was changed.
+func getFlagValueAndChangedStringSlice(flagSet *pflag.FlagSet, flagName string) (value []string, changed bool, err error) {
+	if changed = flagSet.Changed(flagName); !changed {
+		return nil, false, nil
+	}
+	value, err = flagSet.GetStringSlice(flagName)
 	return value, changed, err
 }

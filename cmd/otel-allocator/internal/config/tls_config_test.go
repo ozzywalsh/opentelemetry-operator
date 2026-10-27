@@ -320,3 +320,247 @@ func TestNewTLSConfig_VerifyConnection_OnlyVerifiesLeafCertificate(t *testing.T)
 	err = tlsConfig.VerifyConnection(csMultipleIntermediates)
 	require.NoError(t, err, "Should handle multiple intermediate certificates correctly")
 }
+
+func TestNewTLSConfig_MinVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPEM, keyPEM := generateTestCertificate(t)
+	caPEM, _ := generateTestCertificate(t)
+
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+	caPath := filepath.Join(tmpDir, "ca.crt")
+	require.NoError(t, os.WriteFile(certPath, certPEM, 0o600))
+	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
+	require.NoError(t, os.WriteFile(caPath, caPEM, 0o600))
+
+	tests := []struct {
+		name       string
+		minVersion string
+		wantMin    uint16
+		wantErr    bool
+	}{
+		{
+			name:       "default when unset",
+			minVersion: "",
+			wantMin:    tls.VersionTLS12,
+		},
+		{
+			name:       "TLS 1.3",
+			minVersion: "VersionTLS13",
+			wantMin:    tls.VersionTLS13,
+		},
+		{
+			name:       "invalid version",
+			minVersion: "VersionTLS99",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := HTTPSServerConfig{
+				TLSCertFilePath: certPath,
+				TLSKeyFilePath:  keyPath,
+				CAFilePath:      caPath,
+				MinVersion:      tt.minVersion,
+			}
+			logger := ctrl.Log.WithName("test")
+			tlsConfig, _, err := config.NewTLSConfig(logger)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantMin, tlsConfig.MinVersion)
+		})
+	}
+}
+
+func TestNewTLSConfig_CipherSuites(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPEM, keyPEM := generateTestCertificate(t)
+	caPEM, _ := generateTestCertificate(t)
+
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+	caPath := filepath.Join(tmpDir, "ca.crt")
+	require.NoError(t, os.WriteFile(certPath, certPEM, 0o600))
+	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
+	require.NoError(t, os.WriteFile(caPath, caPEM, 0o600))
+
+	tests := []struct {
+		name         string
+		cipherSuites []string
+		wantLen      int
+		wantErr      bool
+	}{
+		{
+			name:         "nil when unset",
+			cipherSuites: nil,
+			wantLen:      0,
+		},
+		{
+			name:         "valid cipher suite",
+			cipherSuites: []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+			wantLen:      1,
+		},
+		{
+			name:         "invalid cipher suite",
+			cipherSuites: []string{"INVALID_CIPHER"},
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := HTTPSServerConfig{
+				TLSCertFilePath: certPath,
+				TLSKeyFilePath:  keyPath,
+				CAFilePath:      caPath,
+				CipherSuites:    tt.cipherSuites,
+			}
+			logger := ctrl.Log.WithName("test")
+			tlsConfig, _, err := config.NewTLSConfig(logger)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, tlsConfig.CipherSuites, tt.wantLen)
+		})
+	}
+}
+
+func TestNewTLSConfig_CurvePreferences(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPEM, keyPEM := generateTestCertificate(t)
+	caPEM, _ := generateTestCertificate(t)
+
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+	caPath := filepath.Join(tmpDir, "ca.crt")
+	require.NoError(t, os.WriteFile(certPath, certPEM, 0o600))
+	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
+	require.NoError(t, os.WriteFile(caPath, caPEM, 0o600))
+
+	tests := []struct {
+		name             string
+		curvePreferences []string
+		wantCurves       []tls.CurveID
+		wantErr          bool
+	}{
+		{
+			name:             "nil when unset",
+			curvePreferences: nil,
+			wantCurves:       nil,
+		},
+		{
+			name:             "single curve",
+			curvePreferences: []string{"X25519"},
+			wantCurves:       []tls.CurveID{tls.X25519},
+		},
+		{
+			name:             "multiple curves",
+			curvePreferences: []string{"X25519", "CurveP256", "CurveP384"},
+			wantCurves:       []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384},
+		},
+		{
+			name:             "post-quantum hybrid",
+			curvePreferences: []string{"X25519MLKEM768"},
+			wantCurves:       []tls.CurveID{tls.X25519MLKEM768},
+		},
+		{
+			name:             "invalid curve",
+			curvePreferences: []string{"InvalidCurve"},
+			wantErr:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := HTTPSServerConfig{
+				TLSCertFilePath:  certPath,
+				TLSKeyFilePath:   keyPath,
+				CAFilePath:       caPath,
+				CurvePreferences: tt.curvePreferences,
+			}
+			logger := ctrl.Log.WithName("test")
+			tlsConfig, _, err := config.NewTLSConfig(logger)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCurves, tlsConfig.CurvePreferences)
+		})
+	}
+}
+
+func TestNewTLSConfig_FlagOverridesConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPEM, keyPEM := generateTestCertificate(t)
+	caPEM, _ := generateTestCertificate(t)
+
+	certPath := filepath.Join(tmpDir, "tls.crt")
+	keyPath := filepath.Join(tmpDir, "tls.key")
+	caPath := filepath.Join(tmpDir, "ca.crt")
+	require.NoError(t, os.WriteFile(certPath, certPEM, 0o600))
+	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
+	require.NoError(t, os.WriteFile(caPath, caPEM, 0o600))
+
+	// Config file sets TLS 1.2 and one curve.
+	config := HTTPSServerConfig{
+		TLSCertFilePath:  certPath,
+		TLSKeyFilePath:   keyPath,
+		CAFilePath:       caPath,
+		MinVersion:       "VersionTLS12",
+		CurvePreferences: []string{"CurveP256"},
+	}
+
+	// Simulate flag override: change min version and curves.
+	config.MinVersion = "VersionTLS13"
+	config.CurvePreferences = []string{"X25519", "CurveP384"}
+
+	logger := ctrl.Log.WithName("test")
+	tlsConfig, _, err := config.NewTLSConfig(logger)
+	require.NoError(t, err)
+	assert.Equal(t, uint16(tls.VersionTLS13), tlsConfig.MinVersion)
+	assert.Equal(t, []tls.CurveID{tls.X25519, tls.CurveP384}, tlsConfig.CurvePreferences)
+}
+
+func TestParseCurvePreferences(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []string
+		want    []tls.CurveID
+		wantErr bool
+	}{
+		{name: "nil input", input: nil, want: nil},
+		{name: "empty input", input: []string{}, want: nil},
+		{name: "CurveP256", input: []string{"CurveP256"}, want: []tls.CurveID{tls.CurveP256}},
+		{name: "CurveP384", input: []string{"CurveP384"}, want: []tls.CurveID{tls.CurveP384}},
+		{name: "CurveP521", input: []string{"CurveP521"}, want: []tls.CurveID{tls.CurveP521}},
+		{name: "X25519", input: []string{"X25519"}, want: []tls.CurveID{tls.X25519}},
+		{name: "X25519MLKEM768", input: []string{"X25519MLKEM768"}, want: []tls.CurveID{tls.X25519MLKEM768}},
+		{name: "SecP256r1MLKEM768", input: []string{"SecP256r1MLKEM768"}, want: []tls.CurveID{tls.SecP256r1MLKEM768}},
+		{name: "SecP384r1MLKEM1024", input: []string{"SecP384r1MLKEM1024"}, want: []tls.CurveID{tls.SecP384r1MLKEM1024}},
+		{
+			name: "all curves", input: []string{"X25519", "CurveP256", "CurveP384", "CurveP521", "X25519MLKEM768", "SecP256r1MLKEM768", "SecP384r1MLKEM1024"},
+			want: []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521, tls.X25519MLKEM768, tls.SecP256r1MLKEM768, tls.SecP384r1MLKEM1024},
+		},
+		{name: "unknown curve", input: []string{"BadCurve"}, wantErr: true},
+		{name: "one valid one invalid", input: []string{"X25519", "Bogus"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseCurvePreferences(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
