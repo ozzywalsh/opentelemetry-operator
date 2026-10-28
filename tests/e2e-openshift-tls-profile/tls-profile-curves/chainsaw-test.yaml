@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  creationTimestamp: null
+  name: tls-profile-curves
+spec:
+  # Must run alone because it patches the cluster-wide APIServer resource.
+  concurrent: false
+  namespace: chainsaw-otel-tls-profile-curves
+  # Restore the APIServer TLS profile on any failure to prevent cluster-wide impact.
+  catch:
+  - script:
+      timeout: 5m
+      content: ./restore-apiserver.sh
+  steps:
+  - name: Setup Target Allocator RBAC
+    use:
+      template: ../../step-templates/target-allocator-rbac-comprehensive.yaml
+  - name: Setup Collector RBAC
+    use:
+      template: ../../step-templates/collector-with-target-allocator-rbac-comprehensive.yaml
+
+  # Step 0: Create the certificates, then save and replace the cluster profile.
+  - name: step-00
+    try:
+    - script:
+        timeout: 2m
+        content: ./00-create-certs.sh
+    - script:
+        timeout: 2m
+        content: ./00-patch-profile.sh
+
+  # Step 1: Wait for the restart the profile change triggers, then deploy a
+  # collector with a TLS-enabled OTLP receiver and a Target Allocator with mTLS.
+  - name: step-01
+    try:
+    - script:
+        timeout: 5m
+        content: ./01-wait-for-operator.sh
+    - apply:
+        file: 01-install.yaml
+    - assert:
+        file: 01-assert.yaml
+    catch:
+    - podLogs:
+        selector: app.kubernetes.io/managed-by=opentelemetry-operator
+
+  # Step 2: The profile's groups reach the collector ConfigMap as
+  # curve_preferences and the Target Allocator ConfigMap as the https block.
+  - name: step-02
+    try:
+    - script:
+        timeout: 2m
+        content: ./verify-curves.sh
+
+  # Step 3: Flip to a profile whose only difference is its groups list, and
+  # wait for the graceful restart to regenerate both ConfigMaps.
+  - name: step-03
+    try:
+    - script:
+        timeout: 10m
+        content: ./03-flip-profile.sh
+    - assert:
+        file: 01-assert.yaml
+    catch:
+    - podLogs:
+        selector: app.kubernetes.io/managed-by=opentelemetry-operator
+
+  # Step 4: Both ConfigMaps carry the new curves.
+  - name: step-04
+    try:
+    - script:
+        timeout: 2m
+        content: ./verify-curves.sh
+
+  # Step 5: Put the cluster profile back.
+  - name: step-05
+    try:
+    - script:
+        timeout: 5m
+        content: ./restore-apiserver.sh
