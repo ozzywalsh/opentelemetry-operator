@@ -2,6 +2,16 @@
 
 This test verifies that the OpenTelemetry Operator correctly injects and enforces the cluster-wide TLS security profile from the OpenShift APIServer into OpenTelemetry Collector components.
 
+This directory holds two tests:
+
+| Test | Covers |
+|---|---|
+| [`tls-profile`](tls-profile/) | Minimum version and cipher suite injection into collector components, functional verification with `nmap`, and user overrides |
+| [`tls-profile-curves`](tls-profile-curves/) | A `Custom` profile's `groups` list reaching the collector ConfigMap as `curve_preferences` and the Target Allocator ConfigMap as the `https` block |
+
+The rest of this file describes `tls-profile`; see
+[`tls-profile-curves/README.md`](tls-profile-curves/README.md) for the other.
+
 ## Test Overview
 
 The test validates end-to-end TLS profile injection by:
