@@ -140,13 +140,17 @@ func ConfigMap(params Params) (*corev1.ConfigMap, error) {
 	}
 
 	if manifestutils.IsTAMTLSEnabled(params.TargetAllocator.Spec.Mtls) {
-		taConfig["https"] = map[string]any{
+		httpsConfig := map[string]any{
 			"enabled":            true,
 			"listen_addr":        ":8443",
 			"ca_file_path":       filepath.Join(constants.TACollectorTLSDirPath, constants.TACollectorCAFileName),
 			"tls_cert_file_path": filepath.Join(constants.TACollectorTLSDirPath, constants.TACollectorTLSCertFileName),
 			"tls_key_file_path":  filepath.Join(constants.TACollectorTLSDirPath, constants.TACollectorTLSKeyFileName),
 		}
+		var tlsSettings taTLSSettings
+		tlsSettings.ApplyTLSProfile(params.Config.Internal.OperandTLSProfile)
+		tlsSettings.addTo(httpsConfig)
+		taConfig["https"] = httpsConfig
 	}
 
 	if taSpec.AllowInsecureAuthSecrets {

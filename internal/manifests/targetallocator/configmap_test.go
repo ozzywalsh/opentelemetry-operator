@@ -4,6 +4,7 @@
 package targetallocator
 
 import (
+	"crypto/tls"
 	"errors"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/open-telemetry/opentelemetry-operator/apis/v1beta1"
 	"github.com/open-telemetry/opentelemetry-operator/internal/autodetect/certmanager"
+	"github.com/open-telemetry/opentelemetry-operator/internal/components"
 	"github.com/open-telemetry/opentelemetry-operator/internal/config"
 	"github.com/open-telemetry/opentelemetry-operator/pkg/featuregate"
 )
@@ -501,6 +503,121 @@ https:
 		assert.Equal(t, "my-instance-targetallocator", actual.Name)
 		assert.Equal(t, expectedLabels, actual.Labels)
 		assert.Equal(t, expectedData, actual.Data)
+	})
+
+	t.Run("should return expected target allocator config map with HTTPS configuration from the cluster TLS profile", func(t *testing.T) {
+		expectedLabels["app.kubernetes.io/component"] = "opentelemetry-targetallocator"
+		expectedLabels["app.kubernetes.io/name"] = "my-instance-targetallocator"
+
+		cfg := config.Config{
+			CertManagerAvailability: certmanager.Available,
+		}
+		cfg.Internal.OperandTLSProfile = components.NewStaticTLSProfile(
+			tls.VersionTLS12,
+			[]uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+			[]tls.CurveID{tls.CurveP256, tls.CurveP384, tls.X25519},
+		)
+		targetAllocator := targetAllocatorInstance()
+
+		testParams := Params{
+			Collector:       collectorInstance(),
+			TargetAllocator: targetAllocator,
+			Config:          cfg,
+		}
+		testParams.TargetAllocator.Spec.Mtls = &v1beta1.TargetAllocatorMTLS{Enabled: true}
+
+		expectedData := map[string]string{
+			targetAllocatorFilename: `allocation_strategy: consistent-hashing
+collector_selector:
+  matchlabels:
+    app.kubernetes.io/component: opentelemetry-collector
+    app.kubernetes.io/instance: default.my-instance
+    app.kubernetes.io/managed-by: opentelemetry-operator
+    app.kubernetes.io/part-of: opentelemetry
+  matchexpressions: []
+config:
+  scrape_configs:
+  - job_name: otel-collector
+    scrape_interval: 10s
+    static_configs:
+    - targets:
+      - 0.0.0.0:8888
+      - 0.0.0.0:9999
+filter_strategy: relabel-config
+https:
+  ca_file_path: /tls/ca.crt
+  cipher_suites:
+  - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  curve_preferences:
+  - 23
+  - 24
+  - 29
+  enabled: true
+  listen_addr: :8443
+  min_version: VersionTLS12
+  tls_cert_file_path: /tls/tls.crt
+  tls_key_file_path: /tls/tls.key
+`,
+		}
+
+		actual, err := ConfigMap(testParams)
+		assert.NoError(t, err)
+
+		assert.Equal(t, "my-instance-targetallocator", actual.Name)
+		assert.Equal(t, expectedLabels, actual.Labels)
+		assert.Equal(t, expectedData, actual.Data)
+	})
+
+	t.Run("should omit cipher suites but keep curves when the TLS profile minimum version is 1.3", func(t *testing.T) {
+		cfg := config.Config{
+			CertManagerAvailability: certmanager.Available,
+		}
+		cfg.Internal.OperandTLSProfile = components.NewStaticTLSProfile(
+			tls.VersionTLS13,
+			[]uint16{tls.TLS_AES_128_GCM_SHA256},
+			[]tls.CurveID{tls.X25519},
+		)
+		targetAllocator := targetAllocatorInstance()
+
+		testParams := Params{
+			Collector:       collectorInstance(),
+			TargetAllocator: targetAllocator,
+			Config:          cfg,
+		}
+		testParams.TargetAllocator.Spec.Mtls = &v1beta1.TargetAllocatorMTLS{Enabled: true}
+
+		actual, err := ConfigMap(testParams)
+		require.NoError(t, err)
+
+		data := actual.Data[targetAllocatorFilename]
+		assert.Contains(t, data, "min_version: VersionTLS13")
+		assert.Contains(t, data, "curve_preferences:\n  - 29\n")
+		assert.NotContains(t, data, "cipher_suites")
+	})
+
+	t.Run("should not emit TLS profile settings when mTLS is disabled", func(t *testing.T) {
+		cfg := config.Config{
+			CertManagerAvailability: certmanager.Available,
+		}
+		cfg.Internal.OperandTLSProfile = components.NewStaticTLSProfile(
+			tls.VersionTLS12,
+			[]uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
+			[]tls.CurveID{tls.CurveP256},
+		)
+
+		testParams := Params{
+			Collector:       collectorInstance(),
+			TargetAllocator: targetAllocatorInstance(),
+			Config:          cfg,
+		}
+
+		actual, err := ConfigMap(testParams)
+		require.NoError(t, err)
+
+		data := actual.Data[targetAllocatorFilename]
+		assert.NotContains(t, data, "https:")
+		assert.NotContains(t, data, "min_version")
+		assert.NotContains(t, data, "curve_preferences")
 	})
 
 	t.Run("should return expected target allocator config map allocation fallback strategy", func(t *testing.T) {

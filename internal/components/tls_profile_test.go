@@ -59,7 +59,6 @@ func TestStaticTLSProfile(t *testing.T) {
 		ciphers             []uint16
 		curves              []tls.CurveID
 		expectedMinVersion  uint16
-		expectedGolangVer   string
 		expectedOTELVer     string
 		expectedCiphers     []uint16
 		expectedCipherNames []string
@@ -72,7 +71,6 @@ func TestStaticTLSProfile(t *testing.T) {
 			ciphers:             []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_AES_128_GCM_SHA256},
 			curves:              []tls.CurveID{tls.X25519, tls.CurveP256},
 			expectedMinVersion:  tls.VersionTLS12,
-			expectedGolangVer:   "TLS 1.2",
 			expectedOTELVer:     "1.2",
 			expectedCiphers:     []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_AES_128_GCM_SHA256},
 			expectedCipherNames: []string{"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", "TLS_AES_128_GCM_SHA256"},
@@ -85,7 +83,6 @@ func TestStaticTLSProfile(t *testing.T) {
 			ciphers:             []uint16{tls.TLS_AES_128_GCM_SHA256, tls.TLS_AES_256_GCM_SHA384},
 			curves:              []tls.CurveID{tls.X25519, tls.CurveP384},
 			expectedMinVersion:  tls.VersionTLS13,
-			expectedGolangVer:   "TLS 1.3",
 			expectedOTELVer:     "1.3",
 			expectedCiphers:     nil,
 			expectedCipherNames: nil,
@@ -99,7 +96,6 @@ func TestStaticTLSProfile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			profile := NewStaticTLSProfile(tt.minVersion, tt.ciphers, tt.curves)
 			assert.Equal(t, tt.expectedMinVersion, profile.MinTLSVersion())
-			assert.Equal(t, tt.expectedGolangVer, profile.MinTLSVersionGolang())
 			assert.Equal(t, tt.expectedOTELVer, profile.MinTLSVersionOTEL())
 			assert.Equal(t, tt.expectedCiphers, profile.CipherSuites())
 			assert.Equal(t, tt.expectedCipherNames, profile.CipherSuiteNames())

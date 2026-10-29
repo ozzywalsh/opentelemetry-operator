@@ -106,10 +106,6 @@ func NewStaticTLSProfile(minVersion uint16, ciphers []uint16, curves []tls.Curve
 	}
 }
 
-func (p StaticTLSProfile) MinTLSVersionGolang() string {
-	return tls.VersionName(p.minVersion)
-}
-
 func (p StaticTLSProfile) MinTLSVersionOTEL() string {
 	return TLSVersionToCollectorFormat(p.minVersion)
 }
