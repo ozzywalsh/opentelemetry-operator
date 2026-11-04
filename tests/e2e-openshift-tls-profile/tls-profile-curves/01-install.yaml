@@ -1,0 +1,63 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: tls-curves
+spec:
+  mode: statefulset
+  serviceAccount: collector
+  volumeMounts:
+    - name: tls-certs
+      mountPath: /etc/tls
+      readOnly: true
+  volumes:
+    - name: tls-certs
+      secret:
+        secretName: collector-tls-certs
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            tls:
+              cert_file: /etc/tls/tls.crt
+              key_file: /etc/tls/tls.key
+      prometheus:
+        config:
+          scrape_configs: []
+    exporters:
+      debug: {}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
+        metrics:
+          receivers: [prometheus]
+          exporters: [debug]
+  targetAllocator:
+    enabled: true
+    serviceAccount: ta
+    prometheusCR:
+      enabled: true
+      scrapeInterval: 10s
+      serviceMonitorSelector: {}
+      podMonitorSelector: {}
+    mtls:
+      enabled: true
+      # cert-manager is not installed on a plain OpenShift cluster, so the
+      # certificates created in step 00 are passed in directly.
+      useCertManager: false
+      tls:
+        certificateAuthorityCertificate:
+          configMap:
+            name: mtls-ca
+        serverCertificate:
+          certificateSecret:
+            name: ta-server-cert
+          keySecret:
+            name: ta-server-key
+        clientCertificate:
+          certificateSecret:
+            name: ta-client-cert
+          keySecret:
+            name: ta-client-cert
