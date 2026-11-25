@@ -6,10 +6,10 @@ set -euo pipefail
 
 fail() { echo "FAIL: $1"; exit 1; }
 
-EXPECTED_MIN=$(oc get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.min_version}')
-EXPECTED_CIPHERS=$(oc get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.expect_ciphers}')
-EXPECT_CURVES=$(oc get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.expect_curves}')
-EXPECTED_CURVES=$(oc get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.expected_curves}')
+EXPECTED_MIN=$(kubectl get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.min_version}')
+EXPECTED_CIPHERS=$(kubectl get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.expect_ciphers}')
+EXPECT_CURVES=$(kubectl get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.expect_curves}')
+EXPECTED_CURVES=$(kubectl get configmap tls-profile-expected -n "$NAMESPACE" -o jsonpath='{.data.expected_curves}')
 
 # Map collector-format min_version to component-base format for TA comparison.
 case "$EXPECTED_MIN" in

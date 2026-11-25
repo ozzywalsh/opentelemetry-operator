@@ -16,7 +16,15 @@ spec:
         oc patch apiserver cluster --type json \
           -p '[{"op":"remove","path":"/spec/tlsSecurityProfile"}]' 2>/dev/null || true
   steps:
-  # Step 0: Set up TA and collector RBAC.
+  # Step 0: Deploy tls-scanner pod for functional TLS verification.
+  - name: step-00
+    try:
+    - apply:
+        file: 00-install-tls-scanner.yaml
+    - assert:
+        file: 00-assert.yaml
+
+  # Step 0b: Set up TA and collector RBAC.
   - name: step-00-ta-rbac
     use:
       template: ../../step-templates/target-allocator-rbac-comprehensive.yaml
@@ -42,9 +50,16 @@ spec:
         timeout: 1m
         content: ./02-verify-ta-intermediate.sh
 
-  # Step 3: Save current APIServer TLS profile and patch to Modern.
-  # Reuses the same script as the collector TLS profile test.
+  # Step 3: Functional TLS verification via nmap - Intermediate profile.
   - name: step-03
+    try:
+    - script:
+        timeout: 3m
+        content: ./03-verify-nmap-intermediate.sh
+
+  # Step 4: Save current APIServer TLS profile and patch to Modern.
+  # Reuses the same script as the collector TLS profile test.
+  - name: step-04
     try:
     - script:
         timeout: 1m
@@ -54,9 +69,9 @@ spec:
         timeout: 1m
         content: ../tls-profile/11-revert-apiserver.sh
 
-  # Step 4: Wait for the operator to restart and re-reconcile the TA
+  # Step 5: Wait for the operator to restart and re-reconcile the TA
   # with the changed TLS profile.
-  - name: step-04
+  - name: step-05
     try:
     - script:
         timeout: 5m
@@ -70,8 +85,8 @@ spec:
     - podLogs:
         selector: app.kubernetes.io/managed-by=opentelemetry-operator
 
-  # Step 5: Verify changed profile injection in the TA ConfigMap.
-  - name: step-05
+  # Step 6: Verify changed profile injection in the TA ConfigMap.
+  - name: step-06
     try:
     - script:
         timeout: 1m
@@ -80,9 +95,22 @@ spec:
     - script:
         timeout: 1m
         content: ../tls-profile/11-revert-apiserver.sh
+    - podLogs:
+        selector: app.kubernetes.io/managed-by=opentelemetry-operator
 
-  # Step 6: Revert APIServer TLS profile.
-  - name: step-06
+  # Step 7: Functional TLS verification via nmap - changed profile.
+  - name: step-07
+    try:
+    - script:
+        timeout: 3m
+        content: ./06-verify-nmap-changed.sh
+    catch:
+    - script:
+        timeout: 1m
+        content: ../tls-profile/11-revert-apiserver.sh
+
+  # Step 8: Revert APIServer TLS profile.
+  - name: step-08
     try:
     - script:
         timeout: 5m
