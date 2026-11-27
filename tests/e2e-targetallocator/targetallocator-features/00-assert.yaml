@@ -52,10 +52,10 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
             - matchExpressions:
-              - key: ingress-ready
+              - key: kubernetes.io/os
                 operator: In
                 values:
-                - "true"
+                - linux
       containers:
       - env:
         - name: TEST_ENV
